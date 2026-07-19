@@ -1,4 +1,5 @@
 from fastapi import FastAPI
+from pydantic import BaseModel
 
 from agents.rag import FakeEmbeddingProvider, FakeLLMProvider, InMemoryVectorStore, RAGPipeline
 
@@ -24,6 +25,21 @@ def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
+class QueryRequest(BaseModel):
+    question: str
+
+
 @app.post("/query")
-def query(question: str) -> dict[str, object]:
-    return pipeline.query(question)
+def query(req: QueryRequest) -> dict[str, object]:
+    return pipeline.query(req.question)
+
+
+@app.get("/documents")
+def list_documents() -> list[dict]:
+    return pipeline.documents
+
+
+# include MCP router
+from .mcp import router as mcp_router
+
+app.include_router(mcp_router)
