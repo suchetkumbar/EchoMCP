@@ -14,9 +14,10 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
+from starlette.concurrency import run_in_threadpool
 
 from agents.config import get_settings
-from agents.registry import get_vector_store
+from agents.registry import get_embedding_provider, get_vector_store
 from agents.rag import FakeEmbeddingProvider
 
 logger = logging.getLogger(__name__)
@@ -44,7 +45,8 @@ def semantic_search(query: str, top_k: int) -> dict[str, Any]:
     vs = get_vector_store()
     if vs is None:
         raise HTTPException(status_code=503, detail="vector store not available")
-    embedding = FakeEmbeddingProvider().embed(query)
+    provider = get_embedding_provider() or FakeEmbeddingProvider()
+    embedding = provider.embed(query)
     return {"results": vs.search(embedding, top_k=top_k), "provider": "fake-memory"}
 
 
@@ -95,8 +97,13 @@ def call_tool(name: str, arguments: dict[str, Any]) -> Any:
         if page < 1 or size < 1 or size > 100:
             raise ValueError("page must be positive and page_size must be between 1 and 100")
         docs = getattr(get_vector_store(), "_documents", [])
+        unique_docs = {}
+        for document in docs:
+            unique_docs.setdefault(document["document_id"], document)
+        docs = list(unique_docs.values())
         start = (page - 1) * size
-        return {"sources": [{"document_id": d["document_id"], "title": d.get("title", ""), "source_url": d.get("source_url")} for d in docs[start:start + size]]}
+        return {"sources": [{"document_id": d["document_id"], "title": d.get("metadata", {}).get("title", ""),
+                             "source_url": d.get("metadata", {}).get("source_url")} for d in docs[start:start + size]]}
     if name == "health_check":
         return {"status": "ok" if get_vector_store() is not None else "degraded", "components": {"vector_store": "ok" if get_vector_store() is not None else "unavailable"}}
     raise KeyError(name)
@@ -134,7 +141,7 @@ async def mcp_streamable_http(request: Request) -> dict[str, Any]:
             if not isinstance(name, str):
                 return rpc_error(request_id, -32602, "Invalid params")
             try:
-                output = call_tool(name, params.get("arguments") or {})
+                output = await run_in_threadpool(call_tool, name, params.get("arguments") or {})
             except KeyError:
                 return rpc_error(request_id, -32602, "Unknown tool")
             except Exception as exc:

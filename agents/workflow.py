@@ -6,9 +6,10 @@ from pathlib import Path
 from typing import Any, Dict, List, Protocol, Sequence
 
 from agents.config import Settings, get_settings
-from agents.rag import (FakeEmbeddingProvider, FakeLLMProvider, InMemoryVectorStore,
+from agents.rag import (FakeLLMProvider, InMemoryVectorStore,
                         LLMProvider, RAGPipeline)
 from agents.providers import LLMProviderChain
+from agents.embeddings import build_embedding_provider
 from agents import registry
 
 logger = logging.getLogger(__name__)
@@ -33,11 +34,14 @@ class AgentWorkflow:
         providers = list(self.llm_fallbacks or [(self.settings.llm_provider, FakeLLMProvider())])
         self.llm_chain = LLMProviderChain(providers)
         self.pipeline = RAGPipeline(
-            embedding_provider=FakeEmbeddingProvider(),
+            embedding_provider=build_embedding_provider(self.settings),
             llm_provider=self.llm_chain,
             vector_store=InMemoryVectorStore(),
+            chunk_size=self.settings.chunk_size,
+            chunk_overlap=self.settings.chunk_overlap,
         )
         registry.set_vector_store(self.pipeline.vector_store)
+        registry.set_embedding_provider(self.pipeline.embedding_provider)
         self.system_prompt = self._load_prompt()
 
     def _load_prompt(self) -> str:
@@ -80,7 +84,9 @@ class AgentWorkflow:
         db_confident = bool(retrieved) and top_score >= self.settings.similarity_threshold
         route = "web_fallback" if time_sensitive or not db_confident else "db_retrieval"
         route_reason = "time-sensitive" if time_sensitive else ("low_retrieval_confidence" if not db_confident else "local_retrieval")
-        context = retrieved if db_confident and not time_sensitive else []
+        context = ([item for item in retrieved
+                    if float(item.get("score", 0.0)) >= self.settings.similarity_threshold]
+                   if db_confident and not time_sensitive else [])
         citations = [{"document_id": item["document_id"], "content": item["content"], "score": item["score"]}
                      for item in context]
         web_results: list[dict[str, Any]] = []

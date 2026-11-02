@@ -9,6 +9,8 @@ EchoMCP is a Python RAG and MCP server scaffold. It currently ships a FastAPI ga
 - `sources://list`, `system_prompt`, and `safety_prompt` are exposed as MCP resources/prompts.
 - The agent worker routes time-sensitive or low-confidence requests through a web-search adapter when one is injected; otherwise it returns an explicit low-confidence response.
 - LLM adapters can be injected in priority order and are guarded by per-provider circuit breakers. Each real network adapter must enforce its own timeout.
+- RAG ingestion now chunks documents with overlap, batches embeddings when supported, retains chunk metadata, and replaces previously indexed document chunks on re-ingest.
+- An HTTP embedding adapter supports a private service exposing `POST /embed` with `{ "texts": [...] }` and `{ "embeddings": [[...]] }`; response count, dimension, numeric values, TLS URL form, and finite vectors are validated.
 - `POST /query`, `GET /documents`, `GET /health`, and the legacy `/mcp/semantic_search` route remain available.
 - Local storage and providers are process-local fakes. Data is lost on restart and is not shared between replicas.
 
@@ -44,7 +46,12 @@ Compose binds the API to loopback only. Terminate TLS at a trusted reverse proxy
 | `SIMILARITY_THRESHOLD` | `0.72` | Retrieval confidence configuration |
 | `PROMPT_VERSION` | `v1` | Prompt asset version |
 | `LLM_PROVIDER` | `fake` | Provider adapter selection (fake only is wired) |
-| `EMBEDDING_PROVIDER` | `fake` | Embedding adapter selection (fake only is wired) |
+| `EMBEDDING_PROVIDER` | `fake` | `fake` or `http` embedding adapter |
+| `EMBEDDING_SERVICE_URL` | empty | Base URL for the configured HTTP embedding service |
+| `EMBEDDING_API_KEY` | empty | Optional bearer credential sent to the embedding service |
+| `EMBEDDING_DIMENSION` | `1024` | Expected dimension for HTTP embedding vectors |
+| `CHUNK_SIZE` | `1200` | Maximum normalized characters per indexed chunk |
+| `CHUNK_OVERLAP` | `160` | Character overlap between neighboring chunks |
 | `VECTOR_STORE` | `memory` | Repository selection (memory only is wired) |
 
 MCP clients should POST JSON-RPC 2.0 requests to `/mcp` and use the returned server capabilities and tool schemas. Error responses intentionally avoid exposing provider exceptions or secrets.
