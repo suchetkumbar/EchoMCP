@@ -1,10 +1,29 @@
-version: "3.9"
 services:
   api:
-    image: python:3.11-slim
-    working_dir: /app
-    command: python -m uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload
-    volumes:
-      - ..:/app
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      APP_ENV: ${APP_ENV:-production}
+      MCP_BEARER_TOKEN: ${MCP_BEARER_TOKEN:?Set MCP_BEARER_TOKEN in the deployment environment}
+      MAX_REQUEST_BYTES: ${MAX_REQUEST_BYTES:-1048576}
+      PROMPT_VERSION: ${PROMPT_VERSION:-v1}
     ports:
-      - "8000:8000"
+      - "127.0.0.1:${API_PORT:-8000}:8000"
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,noexec,nosuid
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    pids_limit: 128
+    mem_limit: 512m
+    cpus: 1.0
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=2)"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
