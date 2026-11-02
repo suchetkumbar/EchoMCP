@@ -7,10 +7,12 @@ EchoMCP is a Python RAG and MCP server scaffold. It currently ships a FastAPI ga
 - `POST /mcp` supports MCP initialization, tools, resources, prompts, ping, and tool calls.
 - Tools currently available: `semantic_search`, `keyword_search`, `search_database`, `list_sources`, and `health_check`.
 - `sources://list`, `system_prompt`, and `safety_prompt` are exposed as MCP resources/prompts.
+- The agent worker routes time-sensitive or low-confidence requests through a web-search adapter when one is injected; otherwise it returns an explicit low-confidence response.
+- LLM adapters can be injected in priority order and are guarded by per-provider circuit breakers. Each real network adapter must enforce its own timeout.
 - `POST /query`, `GET /documents`, `GET /health`, and the legacy `/mcp/semantic_search` route remain available.
 - Local storage and providers are process-local fakes. Data is lost on restart and is not shared between replicas.
 
-The larger target architecture, including Postgres/pgvector, Redis, authenticated user sessions, external LLM and search providers, voice adapters, and distributed observability, is described in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Those integrations are not represented as operational services in this scaffold yet.
+The larger target architecture, including Postgres/pgvector, Redis, authenticated user sessions, external LLM and search providers, voice adapters, and distributed observability, is described in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Those integrations are not represented as operational services in this scaffold yet; provider injection is the seam for adding them.
 
 ## Run locally
 

@@ -1,7 +1,7 @@
 from fastapi import Depends, FastAPI, Request
 from pydantic import BaseModel, Field
 
-from agents.rag import FakeEmbeddingProvider, FakeLLMProvider, InMemoryVectorStore, RAGPipeline
+from agents.workflow import AgentWorkflow
 from .mcp import require_mcp_auth
 
 app = FastAPI(title="EchoMCP API", version="0.1.0")
@@ -28,11 +28,8 @@ async def security_and_body_limits(request: Request, call_next):
     response.headers["Cache-Control"] = "no-store" if request.url.path.startswith("/mcp") else "no-cache"
     return response
 
-pipeline = RAGPipeline(
-    embedding_provider=FakeEmbeddingProvider(),
-    llm_provider=FakeLLMProvider(),
-    vector_store=InMemoryVectorStore(),
-)
+workflow = AgentWorkflow()
+pipeline = workflow.pipeline
 
 pipeline.ingest_documents([
     {
@@ -55,7 +52,7 @@ class QueryRequest(BaseModel):
 
 @app.post("/query", dependencies=[Depends(require_mcp_auth)])
 def query(req: QueryRequest) -> dict[str, object]:
-    return pipeline.query(req.question)
+    return workflow.run(req.question)
 
 
 @app.get("/documents", dependencies=[Depends(require_mcp_auth)])
