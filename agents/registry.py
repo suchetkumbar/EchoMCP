@@ -4,6 +4,7 @@ from typing import Any, Optional
 
 _VECTOR_STORE: Optional[Any] = None
 _EMBEDDING_PROVIDER: Optional[Any] = None
+_SESSION_MEMORY: Optional[Any] = None
 
 
 def set_vector_store(store: Any) -> None:
@@ -22,3 +23,12 @@ def set_embedding_provider(provider: Any) -> None:
 
 def get_embedding_provider() -> Optional[Any]:
     return _EMBEDDING_PROVIDER
+
+
+def set_session_memory(memory: Any) -> None:
+    global _SESSION_MEMORY
+    _SESSION_MEMORY = memory
+
+
+def get_session_memory() -> Optional[Any]:
+    return _SESSION_MEMORY

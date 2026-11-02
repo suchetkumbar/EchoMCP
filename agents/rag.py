@@ -52,6 +52,19 @@ class FakeLLMProvider:
 class InMemoryVectorStore:
     def __init__(self) -> None:
         self._documents: List[Dict[str, Any]] = []
+        self._source_documents: Dict[str, Dict[str, Any]] = {}
+
+    def replace_document(self, document_id: str, content: str, metadata: Dict[str, Any],
+                         chunks: List[tuple[str, str, List[float], Dict[str, Any]]]) -> None:
+        replacements = []
+        for chunk_id, text, embedding, chunk_metadata in chunks:
+            if not chunk_id or not text or not embedding or not all(math.isfinite(float(v)) for v in embedding):
+                raise ValueError("chunk id, text, and finite embedding are required")
+            replacements.append({"document_id": document_id, "chunk_id": chunk_id, "text": text,
+                                 "embedding": list(embedding), "metadata": dict(chunk_metadata)})
+        self._documents = [item for item in self._documents if item["document_id"] != document_id]
+        self._documents.extend(replacements)
+        self._source_documents[document_id] = {"id": document_id, "content": content, **dict(metadata)}
 
     def add(self, document_id: str, text: str, embedding: List[float], *, chunk_id: str | None = None,
             metadata: Dict[str, Any] | None = None) -> None:
@@ -68,6 +81,25 @@ class InMemoryVectorStore:
 
     def delete_document(self, document_id: str) -> None:
         self._documents = [item for item in self._documents if item["document_id"] != document_id]
+        self._source_documents.pop(document_id, None)
+
+    def list_documents(self) -> list[dict[str, Any]]:
+        return [dict(document) for document in self._source_documents.values()]
+
+    def keyword_search(self, query: str, top_k: int = 5) -> list[dict[str, Any]]:
+        if not isinstance(top_k, int) or not 1 <= top_k <= 100:
+            raise ValueError("top_k must be between 1 and 100")
+        terms = set(re.findall(r"[\w'-]+", query.casefold()))
+        matches = []
+        for item in self._documents:
+            words = set(re.findall(r"[\w'-]+", item["text"].casefold()))
+            overlap = len(terms.intersection(words))
+            if overlap:
+                matches.append((overlap / max(len(terms), 1), item))
+        matches.sort(key=lambda row: (-row[0], row[1]["chunk_id"]))
+        return [{"document_id": item["document_id"], "chunk_id": item["chunk_id"],
+                 "content": item["text"], "metadata": dict(item["metadata"]), "score": score}
+                for score, item in matches[:top_k]]
 
     def search(self, embedding: List[float], top_k: int = 3) -> List[Dict[str, Any]]:
         if not isinstance(top_k, int) or not 1 <= top_k <= 100:
@@ -112,16 +144,20 @@ class RAGPipeline:
             ]
             if len(vectors) != len(chunks):
                 raise ValueError("embedding provider returned the wrong vector count")
-            # Only replace the old document after all new chunk embeddings are ready.
-            delete_document = getattr(self.vector_store, "delete_document", None)
-            if callable(delete_document):
-                delete_document(safe_document["id"])
             metadata = {key: value for key, value in safe_document.items() if key not in {"id", "content"}}
-            for chunk, vector in zip(chunks, vectors):
-                self.vector_store.add(safe_document["id"], chunk.text, vector,
-                                      chunk_id=f"{safe_document['id']}:{chunk.index}",
-                                      metadata={**metadata, "chunk_index": chunk.index,
-                                                "start": chunk.start, "end": chunk.end})
+            chunk_records = [(f"{safe_document['id']}:{chunk.index}", chunk.text, vector,
+                              {**metadata, "chunk_index": chunk.index, "start": chunk.start, "end": chunk.end})
+                             for chunk, vector in zip(chunks, vectors)]
+            replace_document = getattr(self.vector_store, "replace_document", None)
+            if callable(replace_document):
+                replace_document(safe_document["id"], safe_document["content"], metadata, chunk_records)
+            else:
+                delete_document = getattr(self.vector_store, "delete_document", None)
+                if callable(delete_document):
+                    delete_document(safe_document["id"])
+                for chunk_id, chunk_content, vector, chunk_metadata in chunk_records:
+                    self.vector_store.add(safe_document["id"], chunk_content, vector,
+                                          chunk_id=chunk_id, metadata=chunk_metadata)
             self.documents = [d for d in self.documents if d["id"] != safe_document["id"]]
             self.documents.append(safe_document)
 

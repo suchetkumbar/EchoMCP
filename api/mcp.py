@@ -17,7 +17,7 @@ from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 
 from agents.config import get_settings
-from agents.registry import get_embedding_provider, get_vector_store
+from agents.registry import get_embedding_provider, get_session_memory, get_vector_store
 from agents.rag import FakeEmbeddingProvider
 
 logger = logging.getLogger(__name__)
@@ -80,32 +80,44 @@ def call_tool(name: str, arguments: dict[str, Any]) -> Any:
         req = SemanticSearchRequest.model_validate(arguments)
         if name == "keyword_search":
             store = get_vector_store()
-            terms = set(req.query.lower().split())
-            documents = getattr(store, "_documents", [])
-            matches = []
-            for doc in documents:
-                words = set(str(doc.get("text", "")).lower().split())
-                overlap = len(terms.intersection(words))
-                if overlap:
-                    matches.append((overlap / max(len(terms), 1), doc))
-            matches.sort(key=lambda row: (-row[0], row[1]["document_id"]))
-            return {"results": [{"document_id": doc["document_id"], "content": doc["text"], "score": score} for score, doc in matches[:req.top_k]], "provider": "fake-memory-keyword"}
+            search = getattr(store, "keyword_search", None)
+            if callable(search):
+                return {"results": search(req.query, req.top_k), "provider": "keyword-index"}
+            return {"results": [], "provider": "unavailable"}
         data = semantic_search(req.query, req.top_k)
         return data
     if name == "list_sources":
         page = int(arguments.get("page", 1)); size = int(arguments.get("page_size", 20))
         if page < 1 or size < 1 or size > 100:
             raise ValueError("page must be positive and page_size must be between 1 and 100")
-        docs = getattr(get_vector_store(), "_documents", [])
-        unique_docs = {}
-        for document in docs:
-            unique_docs.setdefault(document["document_id"], document)
-        docs = list(unique_docs.values())
+        store = get_vector_store()
+        list_documents = getattr(store, "list_documents", None)
+        if callable(list_documents):
+            docs = list_documents()
+            docs = [{"document_id": d["id"], "metadata": d} for d in docs]
+        else:
+            docs = getattr(store, "_documents", [])
+            unique_docs = {}
+            for document in docs:
+                unique_docs.setdefault(document["document_id"], document)
+            docs = list(unique_docs.values())
         start = (page - 1) * size
         return {"sources": [{"document_id": d["document_id"], "title": d.get("metadata", {}).get("title", ""),
                              "source_url": d.get("metadata", {}).get("source_url")} for d in docs[start:start + size]]}
     if name == "health_check":
-        return {"status": "ok" if get_vector_store() is not None else "degraded", "components": {"vector_store": "ok" if get_vector_store() is not None else "unavailable"}}
+        store = get_vector_store()
+        health = getattr(store, "health", None)
+        try:
+            available = store is not None and (bool(health()) if callable(health) else True)
+        except Exception:
+            available = False
+        state = "ok" if available else "unavailable"
+        components = {"vector_store": state}
+        memory = get_session_memory()
+        if memory is not None:
+            components["redis"] = "ok" if memory.health() else "unavailable"
+        all_ok = all(value == "ok" for value in components.values())
+        return {"status": "ok" if all_ok else "degraded", "components": components}
     raise KeyError(name)
 
 

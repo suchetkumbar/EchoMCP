@@ -15,6 +15,8 @@ class Settings:
     chunk_size: int = int(os.getenv("CHUNK_SIZE", "1200"))
     chunk_overlap: int = int(os.getenv("CHUNK_OVERLAP", "160"))
     vector_store: str = os.getenv("VECTOR_STORE", "memory")
+    database_url: str = os.getenv("DATABASE_URL", "")
+    redis_url: str = os.getenv("REDIS_URL", "")
     similarity_threshold: float = float(os.getenv("SIMILARITY_THRESHOLD", "0.72"))
     prompt_version: str = os.getenv("PROMPT_VERSION", "v1")
     mcp_bearer_token: str = os.getenv("MCP_BEARER_TOKEN", "")
@@ -35,6 +37,8 @@ class Settings:
             raise ValueError("CHUNK_OVERLAP must be smaller than CHUNK_SIZE")
         if self.embedding_provider.lower() in {"http", "service"} and not self.embedding_service_url:
             raise ValueError("EMBEDDING_SERVICE_URL is required for the http embedding provider")
+        if self.vector_store.lower() in {"postgres", "pgvector"} and not self.database_url:
+            raise ValueError("DATABASE_URL is required for the postgres vector store")
         if self.environment.lower() == "production" and not self.mcp_bearer_token:
             raise ValueError("MCP_BEARER_TOKEN is required when APP_ENV=production")
 

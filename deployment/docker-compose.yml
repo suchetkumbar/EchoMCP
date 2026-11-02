@@ -9,6 +9,9 @@ services:
       MCP_BEARER_TOKEN: ${MCP_BEARER_TOKEN:?Set MCP_BEARER_TOKEN in the deployment environment}
       MAX_REQUEST_BYTES: ${MAX_REQUEST_BYTES:-1048576}
       PROMPT_VERSION: ${PROMPT_VERSION:-v1}
+      VECTOR_STORE: postgres
+      DATABASE_URL: postgresql+psycopg://echomcp:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD (URL-safe characters)}@postgres:5432/echomcp
+      REDIS_URL: redis://:${REDIS_PASSWORD:?Set REDIS_PASSWORD (URL-safe characters)}@redis:6379/0
       EMBEDDING_PROVIDER: ${EMBEDDING_PROVIDER:-fake}
       EMBEDDING_SERVICE_URL: ${EMBEDDING_SERVICE_URL:-}
       EMBEDDING_API_KEY: ${EMBEDDING_API_KEY:-}
@@ -17,6 +20,14 @@ services:
       CHUNK_OVERLAP: ${CHUNK_OVERLAP:-160}
     ports:
       - "127.0.0.1:${API_PORT:-8000}:8000"
+    networks:
+      - edge
+      - backend
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     read_only: true
     tmpfs:
       - /tmp:size=16m,noexec,nosuid
@@ -28,8 +39,54 @@ services:
     mem_limit: 512m
     cpus: 1.0
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=2)"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/ready', timeout=2)"]
       interval: 30s
       timeout: 3s
       retries: 3
-      start_period: 10s
+      start_period: 15s
+
+  postgres:
+    image: pgvector/pgvector:pg16
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: echomcp
+      POSTGRES_USER: echomcp
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD (URL-safe characters)}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - backend
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U echomcp -d echomcp"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    mem_limit: 2g
+    cpus: 2.0
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?Set REDIS_PASSWORD (URL-safe characters)}
+    command: ["sh", "-c", "redis-server --appendonly yes --requirepass \"$$REDIS_PASSWORD\""]
+    volumes:
+      - redis_data:/data
+    networks:
+      - backend
+    healthcheck:
+      test: ["CMD-SHELL", "REDISCLI_AUTH=\"$$REDIS_PASSWORD\" redis-cli ping | grep -q PONG"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    mem_limit: 512m
+    cpus: 1.0
+
+networks:
+  edge:
+  backend:
+    internal: true
+
+volumes:
+  postgres_data:
+  redis_data:

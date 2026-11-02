@@ -1,5 +1,7 @@
 from fastapi import Depends, FastAPI, Request
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
+from uuid import UUID
 
 from agents.workflow import AgentWorkflow
 from .mcp import require_mcp_auth
@@ -45,19 +47,27 @@ def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
+@app.get("/health/ready")
+def readiness():
+    result = workflow.readiness()
+    return JSONResponse(result, status_code=200 if result["status"] == "ok" else 503)
+
+
 class QueryRequest(BaseModel):
     model_config = {"str_strip_whitespace": True, "extra": "forbid"}
     question: str = Field(min_length=1, max_length=2000)
+    conversation_id: UUID | None = None
 
 
 @app.post("/query", dependencies=[Depends(require_mcp_auth)])
 def query(req: QueryRequest) -> dict[str, object]:
-    return workflow.run(req.question)
+    return workflow.run(req.question, str(req.conversation_id) if req.conversation_id else None)
 
 
 @app.get("/documents", dependencies=[Depends(require_mcp_auth)])
 def list_documents() -> list[dict]:
-    return pipeline.documents
+    list_documents_from_store = getattr(pipeline.vector_store, "list_documents", None)
+    return list_documents_from_store() if callable(list_documents_from_store) else pipeline.documents
 
 
 # include MCP router
